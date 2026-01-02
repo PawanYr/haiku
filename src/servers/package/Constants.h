@@ -12,6 +12,7 @@
 extern const char* const kPackageFileNameExtension;
 extern const char* const kAdminDirectoryName;
 extern const char* const kActivationFileName;
+extern const char* const kDependencyFileName;
 extern const char* const kTemporaryActivationFileName;
 extern const char* const kFirstBootProcessingNeededFileName;
 extern const char* const kWritableFilesDirectoryName;

@@ -7,6 +7,7 @@
 
 
 #include <ObjectList.h>
+#include <StringList.h>
 #include <SupportDefs.h>
 
 
@@ -89,6 +90,9 @@ public:
 	virtual	status_t			SolveAgain() = 0;
 
 	virtual	status_t			GetResult(BSolverResult& _result) = 0;
+
+	virtual status_t			GetOrphanedPackages(BStringList dependencies,
+									BObjectList<BSolverPackage>& _packages) = 0;
 
 protected:
 								BSolver();

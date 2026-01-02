@@ -1,21 +1,24 @@
 /*
- * Copyright 2013-2020, Haiku, Inc. All Rights Reserved.
+ * Copyright 2013-2026, Haiku, Inc. All Rights Reserved.
  * Distributed under the terms of the MIT License.
  *
  * Authors:
  *		Ingo Weinhold <ingo_weinhold@gmx.de>
  *		Rene Gollent <rene@gollent.com>
+ * 		Pawan Yerramilli <me@pawanyerramilli.com>
  */
 
 
 #include <package/manager/PackageManager.h>
 
 #include <glob.h>
+#include <set>
 
 #include <Catalog.h>
 #include <Directory.h>
 #include <package/CommitTransactionResult.h>
 #include <package/DownloadFileRequest.h>
+#include <package/PackagesDirectoryDefs.h>
 #include <package/PackageRoster.h>
 #include <package/RefreshRepositoryRequest.h>
 #include <package/RepositoryCache.h>
@@ -189,23 +192,23 @@ BPackageManager::Install(const BSolverPackageSpecifierList& packages, bool refre
 
 	// install/uninstall packages
 	_AnalyzeResult();
-	_ConfirmChanges();
-	_ApplyPackageChanges();
+	_ConfirmChanges(false, &packages);
+	_ApplyPackageChanges(false, &packages);
 }
 
 
 void
-BPackageManager::Uninstall(const char* const* packages, int packageCount)
+BPackageManager::Uninstall(const char* const* packages, int packageCount, bool removeOrphans)
 {
 	BSolverPackageSpecifierList packagesToUninstall;
 	if (!packagesToUninstall.AppendSpecifiers(packages, packageCount))
 		throw std::bad_alloc();
-	Uninstall(packagesToUninstall);
+	Uninstall(packagesToUninstall, removeOrphans);
 }
 
 
 void
-BPackageManager::Uninstall(const BSolverPackageSpecifierList& packages)
+BPackageManager::Uninstall(const BSolverPackageSpecifierList& packages, bool removeOrphans)
 {
 	Init(B_ADD_INSTALLED_REPOSITORIES);
 
@@ -244,6 +247,18 @@ BPackageManager::Uninstall(const BSolverPackageSpecifierList& packages)
 	// remove the packages from the repository
 	for (int32 i = 0; BSolverPackage* package = foundPackages.ItemAt(i); i++)
 		installationRepository.DisablePackage(package);
+
+	// Fetch any orphaned packages to also remove
+	if (removeOrphans) {
+		BStringList dependenciesList;
+		BPath path;
+		BObjectList<BSolverPackage> orphans;
+		if (_DeriveDependencyPath(fLocation, &path) == B_OK &&
+			_LoadDependencyList(&path, dependenciesList) == B_OK) {
+			fSolver->GetOrphanedPackages(dependenciesList, orphans);
+			foundPackages.AddList(&orphans);
+		}
+	}
 
 	for (;;) {
 		error = fSolver->VerifyInstallation(BSolver::B_VERIFY_ALLOW_UNINSTALL);
@@ -489,7 +504,8 @@ BPackageManager::_AnalyzeResult()
 
 
 void
-BPackageManager::_ConfirmChanges(bool fromMostSpecific)
+BPackageManager::_ConfirmChanges(bool fromMostSpecific,
+	const BSolverPackageSpecifierList* userInstalled)
 {
 	// check, if there are any changes at all
 	int32 count = fInstalledRepositories.CountItems();
@@ -501,7 +517,9 @@ BPackageManager::_ConfirmChanges(bool fromMostSpecific)
 		}
 	}
 
-	if (!hasChanges)
+	if (!hasChanges && userInstalled != NULL && userInstalled->CountSpecifiers() > 0)
+		_UpdateDependencyList(NULL, userInstalled);
+	else if (!hasChanges)
 		throw BNothingToDoException();
 
 	fUserInteractionHandler->ConfirmChanges(fromMostSpecific);
@@ -509,7 +527,8 @@ BPackageManager::_ConfirmChanges(bool fromMostSpecific)
 
 
 void
-BPackageManager::_ApplyPackageChanges(bool fromMostSpecific)
+BPackageManager::_ApplyPackageChanges(bool fromMostSpecific,
+	const BSolverPackageSpecifierList* userInstalled)
 {
 	int32 count = fInstalledRepositories.CountItems();
 	if (fromMostSpecific) {
@@ -521,7 +540,7 @@ BPackageManager::_ApplyPackageChanges(bool fromMostSpecific)
 	}
 
 	for (int32 i = 0; Transaction* transaction = fTransactions.ItemAt(i); i++)
-		_CommitPackageChanges(*transaction);
+		_CommitPackageChanges(*transaction, userInstalled);
 
 // TODO: Clean up the transaction directories on error!
 }
@@ -663,7 +682,8 @@ retryDownload:
 
 
 void
-BPackageManager::_CommitPackageChanges(Transaction& transaction)
+BPackageManager::_CommitPackageChanges(Transaction& transaction,
+	const BSolverPackageSpecifierList* userInstalled)
 {
 	InstalledRepository& installationRepository = transaction.Repository();
 
@@ -678,6 +698,8 @@ BPackageManager::_CommitPackageChanges(Transaction& transaction)
 		DIE(error, "Failed to commit transaction");
 	if (transactionResult.Error() != B_TRANSACTION_OK)
 		DIE(transactionResult);
+
+	_UpdateDependencyList(&transaction, userInstalled);
 
 	fUserInteractionHandler->ProgressTransactionCommitted(
 		installationRepository, transactionResult);
@@ -873,6 +895,197 @@ BPackageManager::_NextSpecificInstallationLocation()
 	}
 
 	return false;
+}
+
+
+status_t
+BPackageManager::_DeriveDependencyPath(BPackageInstallationLocation location, BPath* _path)
+{
+	switch(location) {
+		case B_PACKAGE_INSTALLATION_LOCATION_SYSTEM:
+			find_directory(B_SYSTEM_PACKAGES_DIRECTORY, _path);
+			break;
+
+		case B_PACKAGE_INSTALLATION_LOCATION_HOME:
+			find_directory(B_USER_PACKAGES_DIRECTORY, _path);
+			break;
+
+		default:
+			fprintf(stderr, "LoadDependencyList: Received unknown installation location!\n");
+			return B_ERROR;
+	}
+
+	_path->Append(PACKAGES_DIRECTORY_ADMIN_DIRECTORY);
+	_path->Append(PACKAGES_DIRECTORY_DEPENDENCIES_FILE);
+	return B_OK;
+}
+
+
+status_t
+BPackageManager::_LoadDependencyList(BPath* path, BStringList& _dependencies)
+{
+	BFile dependenciesFile(path->Path(), B_READ_ONLY);
+
+	off_t size;
+	status_t status = dependenciesFile.GetSize(&size);
+	if (status != B_OK)
+		return status;
+
+	char* rawDependencies = new char[size + 1];
+	off_t read = dependenciesFile.Read(rawDependencies, size);
+	if (read != size)
+		return B_ERROR;
+
+	rawDependencies[size] = '\n';
+	const char* dependency = rawDependencies;
+	char* const end = rawDependencies + size;
+
+	while (dependency < end) {
+		char* dependencyEnd = strchr(dependency, '\n');
+
+		if (dependency == dependencyEnd) {
+			dependency++;
+			continue;
+		}
+
+		*dependencyEnd = '\0';
+		_dependencies.Add(dependency);
+		dependency = dependencyEnd + 1;
+	}
+	delete[] rawDependencies;
+	return B_OK;
+}
+
+
+status_t
+BPackageManager::_WriteDependencyList(BPath* path, BStringList& dependencies)
+{
+	BPath tempPath;
+	path->GetParent(&tempPath);
+	tempPath.Append(PACKAGES_DIRECTORY_ADMIN_DIRECTORY ".tmp");
+	BFile dependencyFile(tempPath.Path(), B_ERASE_FILE | B_READ_WRITE | B_CREATE_FILE);
+	status_t status = dependencyFile.InitCheck();
+	if (status != B_OK) {
+		fprintf(stderr, "Failed to initialize new dependency file!\n");
+		return status;
+	}
+
+	BEntry dependencyEntry(tempPath.Path());
+	for (int i = 0; i < dependencies.CountStrings(); i++) {
+		BString dependency = dependencies.StringAt(i);
+		char rawDependency[dependency.Length() + 1];
+		dependency.CopyInto(rawDependency, 0, dependency.Length());
+		rawDependency[dependency.Length()] = '\n';
+		if ((dependency.Length() + 1)
+			!= dependencyFile.Write(rawDependency, dependency.Length() + 1)) {
+			fprintf(stderr, "Failed to write out dependency %s to new dependency file!\n",
+					dependency.String());
+			dependencyEntry.Remove();
+			return B_ERROR;
+		}
+	}
+
+	if (dependencyEntry.Rename(PACKAGES_DIRECTORY_DEPENDENCIES_FILE, true) != B_OK)
+		DIE("Failed to replace old dependency file!");
+	return B_OK;
+}
+
+
+void
+BPackageManager::_UpdateDependencyList(Transaction* transaction,
+	const BSolverPackageSpecifierList* userInstalledList)
+{
+	BStringList newDependencies;
+	BPath path;
+	BStringList dependencies;
+	status_t status;
+
+	std::set<BString> activated;
+	std::set<BString> deactivated;
+	std::set<BString> userInstalled;
+	if (transaction != NULL) {
+		status = _DeriveDependencyPath(transaction->Repository().Location(), &path);
+
+		BStringList toAdd = transaction->ActivationTransaction().PackagesToActivate();
+		for (int i = 0; i < toAdd.CountStrings(); i++) {
+			int hyphenLoc = toAdd.StringAt(i).FindFirst('-');
+			if (hyphenLoc == B_ERROR) {
+				fprintf(stderr, "Invalid package name %s found!\n", toAdd.StringAt(i).String());
+				continue;
+			}
+			activated.insert(toAdd.StringAt(i).Truncate(hyphenLoc));
+		}
+
+		BStringList toRemove = transaction->ActivationTransaction().PackagesToDeactivate();
+		for (int i = 0; i < toRemove.CountStrings(); i++) {
+			int hyphenLoc = toRemove.StringAt(i).FindFirst('-');
+			if (hyphenLoc == B_ERROR) {
+				fprintf(stderr, "Invalid package name %s found!\n", toRemove.StringAt(i).String());
+				continue;
+			}
+			deactivated.insert(toRemove.StringAt(i).Truncate(hyphenLoc));
+		}
+	} else
+		status = _DeriveDependencyPath(fLocation, &path);
+
+	if (status == B_OK)
+		_LoadDependencyList(&path, dependencies);
+
+	if (userInstalledList != NULL) {
+		for (int i = 0; i < userInstalledList->CountSpecifiers(); i++) {
+			const BSolverPackageSpecifier* specifier = userInstalledList->SpecifierAt(i);
+			switch (specifier->Type()) {
+				case BSolverPackageSpecifier::B_UNSPECIFIED:
+					DIE("Encountered unspecified BSolverPackageIdentifier!");
+
+				case BSolverPackageSpecifier::B_PACKAGE:
+					userInstalled.insert(specifier->Package()->Name());
+					break;
+
+				case BSolverPackageSpecifier::B_SELECT_STRING:
+				{
+					const char* rawSelect = specifier->SelectString().String();
+					char* stop = strpbrk(rawSelect, "<=>");
+					size_t length = specifier->SelectString().Length();
+					if (stop != NULL)
+						length = stop - rawSelect;
+					BString name(rawSelect, length);
+					userInstalled.insert(name);
+					break;
+				}
+				default:
+					DIE("Encountered unknown BSolverPackageIdentifier!");
+			}
+		}
+	}
+
+	for (int i = 0; i < dependencies.CountStrings(); i++) {
+		BString dependency = dependencies.StringAt(i);
+		if (deactivated.count(dependency) > 0 && activated.count(dependency) == 0)
+			continue;
+
+		if (userInstalled.count(dependency) > 0)
+			continue;
+
+		newDependencies.Add(dependency);
+	}
+
+	for (std::set<BString>::iterator it = activated.begin(); it != activated.end(); ++it) {
+		if (deactivated.count(*it) == 0 && userInstalled.count(*it) == 0)
+			newDependencies.Add(*it);
+	}
+
+	if (transaction == NULL && newDependencies.CountStrings() == dependencies.CountStrings())
+		throw BNothingToDoException();
+
+	if (_WriteDependencyList(&path, newDependencies) != B_OK)
+		fprintf(stderr, "Failed to write new dependency file!\n");
+
+
+	if (transaction == NULL) {
+		printf("Package(s) have been marked as user-installed.\n");
+		throw BNothingToDoException();
+	}
 }
 
 

@@ -11,7 +11,7 @@
 
 #define PACKAGES_DIRECTORY_ADMIN_DIRECTORY	"administrative"
 #define PACKAGES_DIRECTORY_ACTIVATION_FILE	"activated-packages"
-
+#define PACKAGES_DIRECTORY_DEPENDENCIES_FILE	"dependency-packages"
 
 
 #endif	// _PACKAGE__PRIVATE__PACKAGES_DIRECTORY_DEFS_H_

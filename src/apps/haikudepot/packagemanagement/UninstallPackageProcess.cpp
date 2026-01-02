@@ -88,7 +88,7 @@ UninstallPackageProcess::RunInternal()
 	const char* packageNameString = package->Name().String();
 
 	try {
-		packageManager->Uninstall(&packageNameString, 1);
+		packageManager->Uninstall(&packageNameString, 1, true);
 	} catch (BFatalErrorException& ex) {
 		BString errorString;
 		errorString.SetToFormat("Fatal error occurred while uninstalling package %s: %s (%s)\n",

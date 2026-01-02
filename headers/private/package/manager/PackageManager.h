@@ -95,9 +95,9 @@ public:
 			void				Install(const BSolverPackageSpecifierList&
 									packages, bool refresh = true);
 			void				Uninstall(const char* const* packages,
-									int packageCount);
+									int packageCount, bool removeOrphans = false);
 			void				Uninstall(const BSolverPackageSpecifierList&
-									packages);
+									packages, bool removeOrphans = false);
 			void				Update(const char* const* packages,
 									int packageCount);
 			void				Update(const BSolverPackageSpecifierList&
@@ -105,7 +105,6 @@ public:
 			void				FullSync();
 
 			void				VerifyInstallation();
-
 
 	virtual	status_t			DownloadPackage(const BString& fileURL,
 									const BEntry& targetEntry,
@@ -125,13 +124,15 @@ protected:
 private:
 			void				_HandleProblems();
 			void				_AnalyzeResult();
-			void				_ConfirmChanges(bool fromMostSpecific = false);
-			void				_ApplyPackageChanges(
-									bool fromMostSpecific = false);
+			void				_ConfirmChanges(bool fromMostSpecific = false,
+									const BSolverPackageSpecifierList* userInstalled = NULL);
+			void				_ApplyPackageChanges(bool fromMostSpecific = false,
+									const BSolverPackageSpecifierList* userInstalled = NULL);
 			void				_PreparePackageChanges(
 									InstalledRepository&
 										installationRepository);
-			void				_CommitPackageChanges(Transaction& transaction);
+			void				_CommitPackageChanges(Transaction& transaction,
+									const BSolverPackageSpecifierList* userInstalled);
 
 			void				_ClonePackageFile(
 									LocalRepository* repository,
@@ -156,6 +157,16 @@ private:
 			BSolverPackage*		_AddLocalPackage(const char* fileName);
 
 			bool				_NextSpecificInstallationLocation();
+
+			status_t			_DeriveDependencyPath(BPackageInstallationLocation location,
+									BPath* _path);
+
+			status_t			_LoadDependencyList(BPath* path, BStringList& _dependencies);
+
+			status_t			_WriteDependencyList(BPath* path, BStringList& dependencies);
+
+			void				_UpdateDependencyList(Transaction* transaction,
+									const BSolverPackageSpecifierList* userInstalledList);
 
 protected:
 			int32				fDebugLevel;

@@ -1,9 +1,10 @@
 /*
- * Copyright 2013, Haiku, Inc. All Rights Reserved.
+ * Copyright 2013-2026, Haiku, Inc. All Rights Reserved.
  * Distributed under the terms of the MIT License.
  *
  * Authors:
  *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ * 		Pawan Yerramilli <me@pawanyerramilli.com>
  */
 
 
@@ -591,6 +592,46 @@ LibsolvSolver::GetResult(BSolverResult& _result)
 						BSolverResultElement::B_TYPE_INSTALL, package))) {
 				return B_NO_MEMORY;
 			}
+		}
+	}
+
+	return B_OK;
+}
+
+
+status_t
+LibsolvSolver::GetOrphanedPackages(BStringList dependencies,
+	BObjectList<BSolverPackage>& _packages)
+{
+	_AddRepositories();
+	_InitJobQueue();
+
+	for (int i = 0; i < fInstalledRepository->Repository()->CountPackages(); i++) {
+		if (!dependencies.HasString(fInstalledRepository->Repository()->PackageAt(i)->Name())) {
+			queue_push2(fJobs, SOLVER_SOLVABLE | SOLVER_USERINSTALLED,
+				_GetSolvable(fInstalledRepository->Repository()->PackageAt(i)));
+		}
+	}
+
+	_InitSolver();
+	_Solve();
+
+	SolvQueue orphans;
+	queue_free(&fSolver->job);
+	queue_init_clone(&fSolver->job, fJobs);
+	solver_get_unneeded(fSolver, &orphans, 0);
+
+	for (int i = 0; i < orphans.count; i++) {
+		Id solvID = orphans.elements[i];
+
+		if (fPool->solvables[solvID].repo != fInstalledRepository->SolvRepo())
+			continue;
+
+		BSolverPackage* package = _GetPackage(solvID);
+
+		if (package != NULL) {
+			if (!_packages.AddItem(package))
+				return B_NO_MEMORY;
 		}
 	}
 

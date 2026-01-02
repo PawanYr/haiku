@@ -12,6 +12,7 @@
 const char* const kPackageFileNameExtension = ".hpkg";
 const char* const kAdminDirectoryName = PACKAGES_DIRECTORY_ADMIN_DIRECTORY;
 const char* const kActivationFileName = PACKAGES_DIRECTORY_ACTIVATION_FILE;
+const char* const kDependencyFileName = PACKAGES_DIRECTORY_DEPENDENCIES_FILE;
 const char* const kTemporaryActivationFileName
 	= PACKAGES_DIRECTORY_ACTIVATION_FILE ".tmp";
 const char* const kFirstBootProcessingNeededFileName

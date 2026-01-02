@@ -345,9 +345,11 @@ done
 if [ -n "$resolvePackageDependencies" ]; then
 	echo "Resolving package dependencies ..."
 
+	rm -f "${outputDir}/dependency-packages"
 	packageUrls=`$getPackageDependencies $repositories -- $systemPackages`
 	for packageUrl in $packageUrls; do
 		packageFileName=`basename $packageUrl`
+		echo "${packageFileName%%-*}" >> "${outputDir}/dependency-packages"
 		if [ "$otherPackages" != "${otherPackages#*$packageFileName}" ]; then
 			echo "ERROR: $packageFileName is a dependency of a package installed in /system/packages," \
 				"but it is in another (i.e. unactivated) package directory!"
@@ -358,6 +360,10 @@ if [ -n "$resolvePackageDependencies" ]; then
 		$cp "${sPrefix}$packageFilePath" "${tPrefix}system/packages"
 		systemPackages="$systemPackages $packageFilePath"
 	done
+	$mkdir -p "${tPrefix}system/packages/administrative"
+	$cp "${sPrefix}${outputDir}/dependency-packages" "${tPrefix}system/packages/administrative/dependency-packages"
+	echo "First Boot written by build system." > "${outputDir}/FirstBootProcessingNeeded"
+	$cp "${sPrefix}${outputDir}/FirstBootProcessingNeeded" "${tPrefix}system/packages/administrative/FirstBootProcessingNeeded"
 
 	# validate dependencies of optional packages
 	packageUrls=`$getPackageDependencies $repositories -- $systemPackages $otherPackages`

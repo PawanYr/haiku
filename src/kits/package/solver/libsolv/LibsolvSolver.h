@@ -72,6 +72,9 @@ public:
 
 	virtual	status_t			GetResult(BSolverResult& _result);
 
+	virtual status_t			GetOrphanedPackages(BStringList dependencies,
+									BObjectList<BSolverPackage>& _packages);
+
 private:
 			struct SolvQueue;
 			struct SolvDataIterator;

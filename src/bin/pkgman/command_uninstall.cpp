@@ -4,6 +4,7 @@
  *
  * Authors:
  *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ *		Pawan Yerramilli <me@pawanyerramilli.com>
  */
 
 
@@ -38,6 +39,9 @@ static const char* const kLongUsage =
 	"  -H, --home\n"
 	"    Uninstall the packages from the user's home directory. Default is to\n"
 	"    uninstall from the system directory.\n"
+	"  -k, --keep-orphaned\n"
+	"    Do not uninstall orphaned packages that were originally installed as\n"
+	"    dependencies for packages that are no longer present.\n"
 	"  -y\n"
 	"    Non-interactive mode. Automatically confirm changes, but fail when\n"
 	"    encountering problems.\n"
@@ -54,17 +58,19 @@ UninstallCommand::Execute(int argc, const char* const* argv)
 	BPackageInstallationLocation location
 		= B_PACKAGE_INSTALLATION_LOCATION_SYSTEM;
 	bool interactive = true;
+	bool keepOrphaned = false;
 
 	while (true) {
 		static struct option sLongOptions[] = {
 			{ "debug", required_argument, 0, OPTION_DEBUG },
 			{ "help", no_argument, 0, 'h' },
 			{ "home", no_argument, 0, 'H' },
+			{ "keep-orphaned", no_argument, 0, 'k' },
 			{ 0, 0, 0, 0 }
 		};
 
 		opterr = 0; // don't print errors
-		int c = getopt_long(argc, (char**)argv, "hHy", sLongOptions, NULL);
+		int c = getopt_long(argc, (char**)argv, "hHky", sLongOptions, NULL);
 		if (c == -1)
 			break;
 
@@ -78,6 +84,10 @@ UninstallCommand::Execute(int argc, const char* const* argv)
 
 			case 'H':
 				location = B_PACKAGE_INSTALLATION_LOCATION_HOME;
+				break;
+
+			case 'k':
+				keepOrphaned = true;
 				break;
 
 			case 'y':
@@ -94,13 +104,13 @@ UninstallCommand::Execute(int argc, const char* const* argv)
 	if (argc < optind + 1)
 		PrintUsageAndExit(true);
 
-	int packageCount = argc - optind;
-	const char* const* packages = argv + optind;
-
 	// perform the installation
 	PackageManager packageManager(location, interactive);
 	packageManager.SetDebugLevel(fCommonOptions.DebugLevel());
-	packageManager.Uninstall(packages, packageCount);
+
+	int packageCount = argc - optind;
+	const char* const* packages = argv + optind;
+	packageManager.Uninstall(packages, packageCount, !keepOrphaned);
 
 	return 0;
 }

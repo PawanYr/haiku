@@ -1,9 +1,10 @@
 /*
- * Copyright 2013-2014, Haiku, Inc. All Rights Reserved.
+ * Copyright 2013-2026, Haiku, Inc. All Rights Reserved.
  * Distributed under the terms of the MIT License.
  *
  * Authors:
  *		Ingo Weinhold <ingo_weinhold@gmx.de>
+ * 		Pawan Yerramilli <me@pawanyerramilli.com>
  */
 
 
@@ -528,6 +529,16 @@ CommitTransactionHandler::_CreateOldStateDirectory()
 	BEntry activationFile;
 	_WriteActivationFile(RelativePath(kAdminDirectoryName, directoryName),
 		kActivationFileName, PackageSet(), PackageSet(), activationFile);
+
+	// write the old dependency-packages file
+	BFile dependencies(&adminDirectory, kDependencyFileName, B_READ_ONLY);
+	BFile dependenciesCopy(&fOldStateDirectory, kDependencyFileName, B_CREATE_FILE | B_READ_WRITE);
+	off_t size;
+	if (dependencies.GetSize(&size) == B_OK) {
+		char* rawDependencies = new char[size];
+		if (size == dependencies.Read(rawDependencies, size))
+			dependenciesCopy.Write(rawDependencies, size);
+	}
 
 	fResult.SetOldStateDirectory(fOldStateDirectoryName);
 }
